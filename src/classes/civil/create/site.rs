@@ -748,11 +748,16 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
             // A closed edge (flag 1) is read with a copy of its first
             // vertex last.
             let closed = flags & 1 != 0;
-            let kind = match dxf(*h)?.as_str() {
-                "AECC_ALIGNMENT" => MemberKind::Alignment,
-                "AECC_FEATURE_LINE" => MemberKind::FeatureLine,
-                "AECC_PARCEL_SEGMENT" => MemberKind::LotLine { closed },
-                "AECC_PROFILE" => MemberKind::Profile,
+            // A composed build's reserved lot-line slot carries no record
+            // (add_parcel_without_segment; the record is the file's
+            // parcel-segment set's to carry): the container's own edge
+            // holds the shape, the closed flag the closure.
+            let kind = match dxf(*h).as_deref() {
+                Some("AECC_ALIGNMENT") => MemberKind::Alignment,
+                Some("AECC_FEATURE_LINE") => MemberKind::FeatureLine,
+                Some("AECC_PARCEL_SEGMENT") => MemberKind::LotLine { closed },
+                Some("AECC_PROFILE") => MemberKind::Profile,
+                None => MemberKind::LotLine { closed },
                 _ => return None,
             };
             let run = if closed { &run[..run.len() - 1] } else { &run[..] };
@@ -986,7 +991,7 @@ pub fn add_alignment_on_site(doc: &mut CadDocument, site: Handle, name: &str, ve
     }
     let style = alignment_style(doc).ok_or_else(|| invalid("drawing has no alignment styles"))?;
     let elevations = vec![0.0; path.len()];
-    let (alignment, _) = join_site(doc, site, path, &elevations, MemberKind::Alignment, true, layer, |doc, common, edge, container| write_alignment(doc, common, name, &elements, style, container.value(), edge, None, &[], &[], &[], &[], None))?;
+    let (alignment, _) = join_site(doc, site, path, &elevations, MemberKind::Alignment, true, layer, None, |doc, common, edge, container| write_alignment(doc, common, name, &elements, style, container.value(), edge, None, &[], &[], &[], &[], None))?;
     Ok(alignment)
 }
 
@@ -1306,7 +1311,9 @@ const PARCEL_AREA_LABELS: [[i32; 3]; 2] = [[2, 0x0F00_C032, DEFAULT_STYLE_ID], [
 /// ```
 // ponytail: the 128 zero bits and the 7-bit run are the same in every
 // sample (WP03 to WP14); name them once a segment varies them.
-fn write_lot_line(doc: &mut CadDocument, common: EntityCommon, edge: i32, container: Handle) -> Result<Handle, DxfError> {
+fn write_lot_line(doc: &mut CadDocument, common: EntityCommon, edge: i32, container: Handle, graphic: Option<Vec<u8>>) -> Result<Handle, DxfError> {
+    let mut common = common;
+    common.graphic_data = graphic;
     let refs = vec![soft_pointer(0), hard_pointer(container.value()), hard_pointer(container.value()), soft_pointer(0), hard_pointer(0)];
     let strings = vec!["AeccImpLotLine".to_string(), String::new(), String::new()];
     put_entity(
@@ -1418,7 +1425,7 @@ fn write_parcel_over(doc: &mut CadDocument, mut common: EntityCommon, site: Hand
 /// split and the parcels of the parts are written (every parcel's label
 /// moves into what is left of its face). Returns the segment and the new
 /// parcels.
-fn add_lot_line_on(doc: &mut CadDocument, site: Handle, points: &[(Vector2, f64)], closed: bool, meet: bool, layer: Option<&str>) -> Result<(Handle, Vec<Handle>), DxfError> {
+fn add_lot_line_on(doc: &mut CadDocument, site: Handle, points: &[(Vector2, f64)], closed: bool, meet: bool, layer: Option<&str>, member_record: Option<u64>, record: impl FnOnce(&mut CadDocument, EntityCommon, i32, Handle) -> Result<Handle, DxfError>) -> Result<(Handle, Vec<Handle>), DxfError> {
     let n = points.len();
     let vertices: Vec<Vector2> = points.iter().map(|p| p.0).collect();
     let path: Vec<PathPoint> = points.iter().enumerate().map(|(i, p)| (p.0, Some(p.1).filter(|b| *b != 0.0 && (closed || i + 1 < n)))).collect();
@@ -1441,7 +1448,34 @@ fn add_lot_line_on(doc: &mut CadDocument, site: Handle, points: &[(Vector2, f64)
         return Err(invalid("a lot line crosses or touches itself"));
     }
     let elevations = vec![0.0; n];
-    join_site(doc, site, path, &elevations, MemberKind::LotLine { closed }, meet, layer, |doc, common, edge, container| write_lot_line(doc, common, edge, container))
+    join_site(doc, site, path, &elevations, MemberKind::LotLine { closed }, meet, layer, member_record, record)
+}
+
+/// The standalone parcel-segment record (a decoded lot line) on `site`'s
+/// container: [`write_lot_line`]'s record form with the edge id, and —
+/// when the oracle record carries a graphic-image section — that section
+/// rebuilt from `geometry`: the class-name text at the label point and
+/// the extents rectangle walked around its corners (#591/#595's decode;
+/// the #665 outline-ring pattern). A record stored without a base curve
+/// (geometry `None`) is written without one, as stored. The site's
+/// container members are not rebuilt; the record is what the application
+/// censuses as `AeccDbLotLine`.
+pub fn add_parcel_segment_record(doc: &mut CadDocument, site: Handle, edge: i32, geometry: Option<&crate::classes::civil::ParcelSegmentGeometry>, layer: Option<&str>) -> Result<Handle, DxfError> {
+    let (container, _members, _parcels, _line_style, _next) = members_of(doc, site)?;
+    let layer = layer.unwrap_or("0");
+    let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    let common = EntityCommon {
+        handle: doc.allocate_handle(),
+        owner_handle: doc.header.model_space_block_handle,
+        layer: layer.into(),
+        layer_handle: Some(layer_handle),
+        ..EntityCommon::default()
+    };
+    let graphic = geometry.map(|g| {
+        let ring: Vec<Vector3> = g.corners.iter().copied().chain(std::iter::once(g.corners[0])).map(|p| Vector3::new(p.x, p.y, 0.0)).collect();
+        graphic_image(PARCEL_GRAPHIC_KIND, "AeccDbLotLine (AeccLand130)", 1, Vector3::new(g.label_point.x, g.label_point.y, 0.0), &[ring])
+    });
+    write_lot_line(doc, common, edge, container, graphic)
 }
 
 /// Joins a new member through `path` to `site`'s container and writes the
@@ -1450,12 +1484,16 @@ fn add_lot_line_on(doc: &mut CadDocument, site: Handle, points: &[(Vector2, f64)
 /// where they meet, the faces they cut are split and the parcels of the
 /// parts are written (every parcel's label moves into what is left of its
 /// face). `record` writes the member's own record (its entity, edge id and
-/// the container). Returns the record and the new parcels.
-fn join_site(doc: &mut CadDocument, site: Handle, path: Vec<PathPoint>, elevations: &[f64], kind: MemberKind, meet: bool, layer: Option<&str>, record: impl FnOnce(&mut CadDocument, EntityCommon, i32, Handle) -> Result<Handle, DxfError>) -> Result<(Handle, Vec<Handle>), DxfError> {
+/// the container). `member_record` gives the member's record handle when
+/// the record already exists (a parcel-segment record the file's set
+/// carries): the member joins under that handle — the container's edge
+/// slots point at it — and `record` is not called. Returns the record and
+/// the new parcels.
+fn join_site(doc: &mut CadDocument, site: Handle, path: Vec<PathPoint>, elevations: &[f64], kind: MemberKind, meet: bool, layer: Option<&str>, member_record: Option<u64>, record: impl FnOnce(&mut CadDocument, EntityCommon, i32, Handle) -> Result<Handle, DxfError>) -> Result<(Handle, Vec<Handle>), DxfError> {
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     let line = EntityCommon {
-        handle: doc.allocate_handle(),
+        handle: member_record.map_or_else(|| doc.allocate_handle(), Handle::new),
         owner_handle: doc.header.model_space_block_handle,
         layer: layer.into(),
         layer_handle: Some(layer_handle),
@@ -1760,8 +1798,56 @@ fn join_groups(
 /// without one); the application names it from the style and its number.
 pub fn add_parcel(doc: &mut CadDocument, site: Handle, vertices: &[Vector2], layer: Option<&str>) -> Result<Handle, DxfError> {
     let points: Vec<(Vector2, f64)> = vertices.iter().map(|p| (*p, 0.0)).collect();
-    let (_, parcels) = add_lot_line_on(doc, site, &points, true, false, layer)?;
+    let (_, parcels) = add_lot_line_on(doc, site, &points, true, false, layer, None, |doc, common, edge, container| write_lot_line(doc, common, edge, container, None))?;
     parcels.into_iter().next().ok_or_else(|| invalid("the lot line closes no face"))
+}
+
+/// [`add_parcel`] for a composed build, where the file's lot-line records
+/// come from its own parcel-segment set ([`add_parcel_segment_record`]):
+/// the closed lot line still joins the site's container and its inside
+/// still becomes the parcel's face, but this adds no `AECC_PARCEL_SEGMENT`
+/// record of its own. The oracles carry exactly one record per lot line
+/// and a parcel never adds a second record for a boundary the set already
+/// carries (Align-2: the parcel boundary IS the file's single segment,
+/// 1 parcel, 1 record; Assembly-1a: 102 records for 56 parcels whose
+/// faces those 102 bound — only 3 rings are single lot lines; Parcel-2C:
+/// 30 records for 11 parcels; Labels-Parcels: 55 for 54). Write the
+/// parcel-segment set first: when one of its records carries this ring
+/// (its extents rectangle equal to it, the created-from-object shape —
+/// Align-2's), the parcel's edge slot in the container adopts that
+/// record, the shape the oracle itself stores; when none does, the slot
+/// keeps the boundary's reserved handle, which carries no record (the
+/// application reads the faces from the container, the lot lines from
+/// the records). Returns the parcel.
+pub fn add_parcel_without_segment(doc: &mut CadDocument, site: Handle, vertices: &[Vector2], layer: Option<&str>) -> Result<Handle, DxfError> {
+    let points: Vec<(Vector2, f64)> = vertices.iter().map(|p| (*p, 0.0)).collect();
+    // The site's own container: the record a ring adopts must be one of
+    // this site's lot lines.
+    let (container, _, _, _, _) = members_of(doc, site)?;
+    let adopting = doc.entities().find_map(|e| {
+        let EntityType::Extended(x) = e else { return None };
+        let ExtendedEntityData::Arch(a) = &x.data else { return None };
+        if a.dxf_name != "AECC_PARCEL_SEGMENT" || !a.typed_handles().iter().any(|r| r.0 == container.value()) {
+            return None;
+        }
+        let g = a.parcel_segment_geometry()?;
+        (ring_is_the_extents(&g.corners, vertices)).then_some(x.common.handle)
+    });
+    let (_, parcels) = add_lot_line_on(doc, site, &points, true, false, layer, adopting.map(|h| h.value()), |_, common, _, _| Ok(common.handle))?;
+    parcels.into_iter().next().ok_or_else(|| invalid("the lot line closes no face"))
+}
+
+/// Whether a closed lot line's `vertices` are, as a ring (either
+/// direction, from any start), exactly the extents rectangle `corners`
+/// stores (low, low-right, high, high-left).
+fn ring_is_the_extents(corners: &[Vector2; 4], vertices: &[Vector2]) -> bool {
+    if vertices.len() != 4 || vertices.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) {
+        return false;
+    }
+    let eq = |a: &Vector2, b: &Vector2| a.x == b.x && a.y == b.y;
+    (0..4).any(|sh| {
+        (0..4).all(|k| eq(&corners[(sh + k) % 4], &vertices[k])) || (0..4).all(|k| eq(&corners[(sh + 4 - k) % 4], &vertices[k]))
+    })
 }
 
 /// Adds a lot line (a parcel segment) through `vertices` on `site`, each
@@ -1777,7 +1863,7 @@ pub fn add_parcel(doc: &mut CadDocument, site: Handle, vertices: &[Vector2], lay
 /// application gives it. Parcels take the site's parcel style and the
 /// drawing's default parcel area label style.
 pub fn add_lot_line(doc: &mut CadDocument, site: Handle, vertices: &[(Vector2, f64)], closed: bool, layer: Option<&str>) -> Result<(Handle, Vec<Handle>), DxfError> {
-    add_lot_line_on(doc, site, vertices, closed, true, layer)
+    add_lot_line_on(doc, site, vertices, closed, true, layer, None, |doc, common, edge, container| write_lot_line(doc, common, edge, container, None))
 }
 
 #[cfg(test)]
@@ -2024,6 +2110,93 @@ mod tests {
         assert_eq!(faces, vec![1, 4, 5]);
         assert_eq!(arch(&doc, made[0]).parcel_faces(), Some((1, vec![4, 5])));
         add_lot_line(&mut doc, s, &[(w(50.0, -20.0), 0.0), (w(50.0, 70.0), 0.0)], false, None).unwrap();
+    }
+
+    fn count_arch(doc: &CadDocument, dxf: &str) -> usize {
+        doc.entities().filter(|e| matches!(e, EntityType::Extended(x) if matches!(&x.data, ExtendedEntityData::Arch(a) if a.dxf_name == dxf))).count()
+    }
+
+    #[test]
+    fn a_parcel_records_its_boundary_and_a_silent_one_does_not() {
+        let v = Vector2::new;
+        let ring = [v(0.0, 0.0), v(100.0, 0.0), v(100.0, 50.0), v(0.0, 50.0)];
+        // add_parcel: the created-from-object form — the boundary carries
+        // exactly one parcel-segment record (Align-2's oracle: 1 parcel,
+        // 1 segment whose corners are the ring).
+        let mut doc = drawing();
+        let s = add_site(&mut doc, "Site", "").unwrap();
+        // add_site itself writes the site's own parcel record; count from it.
+        let base = count_arch(&doc, "AECC_PARCEL");
+        add_parcel(&mut doc, s, &ring, None).unwrap();
+        assert_eq!(count_arch(&doc, "AECC_PARCEL_SEGMENT"), 1);
+        assert_eq!(count_arch(&doc, "AECC_PARCEL"), base + 1);
+        // add_parcel_without_segment: the composed build's form — the
+        // closed lot line still joins the container and makes the face,
+        // but no boundary record is written for it (the file's
+        // parcel-segment set carries the records; E-1).
+        let mut doc = drawing();
+        let s = add_site(&mut doc, "Site", "").unwrap();
+        let base = count_arch(&doc, "AECC_PARCEL");
+        let parcel = add_parcel_without_segment(&mut doc, s, &ring, None).unwrap();
+        assert_eq!(count_arch(&doc, "AECC_PARCEL_SEGMENT"), 0);
+        assert_eq!(count_arch(&doc, "AECC_PARCEL"), base + 1);
+        // No record carries the ring, so the boundary's reserved slot
+        // carries no record either: this shape is the composed build's for
+        // boundaries the parcel-segment set does not carry, and the site
+        // does not read back member-wise until its set carries them (see
+        // the composed test).
+        let path = std::env::temp_dir().join(format!("civil-parcel-silent-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(count_arch(&back, "AECC_PARCEL_SEGMENT"), 0);
+        assert_eq!(count_arch(&back, "AECC_PARCEL"), count_arch(&doc, "AECC_PARCEL"));
+        let _ = parcel;
+    }
+
+    #[test]
+    fn the_segment_record_and_the_silent_parcel_compose_to_the_oracle_census() {
+        // The composed build (E-1) over Align-2's oracle shape: the
+        // parcel-segment set is written first and carries the boundary
+        // record (corners == the parcel ring, exactly as decoded); the
+        // parcel adds none and its edge slot adopts the record.
+        let v = Vector2::new;
+        let ring = [v(3820.2309548999183, 2914.98799626017), v(5850.325349580031, 2914.98799626017), v(5850.325349580031, 4999.86946262978), v(3820.2309548999183, 4999.86946262978)];
+        let geometry = crate::classes::civil::ParcelSegmentGeometry {
+            label_point: v(3820.330954899918, 2915.08799626017),
+            corners: ring,
+        };
+        let mut doc = drawing();
+        let s = add_site(&mut doc, "Site", "").unwrap();
+        let base = count_arch(&doc, "AECC_PARCEL");
+        let record = add_parcel_segment_record(&mut doc, s, 1, Some(&geometry), None).unwrap();
+        let parcel = add_parcel_without_segment(&mut doc, s, &ring, None).unwrap();
+        assert_eq!(count_arch(&doc, "AECC_PARCEL_SEGMENT"), 1);
+        assert_eq!(count_arch(&doc, "AECC_PARCEL"), base + 1);
+        // The container's one edge slot points at the adopted record, and
+        // the site reads back (the member kind comes from the record).
+        let (_, members, parcels, _, _) = members_of(&mut doc, s).unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(parcels, vec![parcel.value()]);
+        // It survives the file: one record, whose geometry reads back
+        // bit-exact, and the adopted slot with it.
+        let path = std::env::temp_dir().join(format!("civil-parcel-segment-e1-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let mut back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(count_arch(&back, "AECC_PARCEL_SEGMENT"), count_arch(&doc, "AECC_PARCEL_SEGMENT"));
+        assert_eq!(count_arch(&back, "AECC_PARCEL"), count_arch(&doc, "AECC_PARCEL"));
+        let (back_record_handle, back_record) = back.entities().find_map(|e| match e {
+            EntityType::Extended(x) => match &x.data {
+                ExtendedEntityData::Arch(a) if a.dxf_name == "AECC_PARCEL_SEGMENT" => Some((x.common.handle, a.clone())),
+                _ => None,
+            },
+            _ => None,
+        }).unwrap();
+        assert_eq!(back_record.parcel_segment_geometry(), Some(geometry));
+        assert_eq!(back_record_handle, record);
+        let (_, members, parcels, _, _) = members_of(&mut back, s).unwrap();
+        assert_eq!((members.len(), parcels), (1, vec![parcel.value()]));
     }
 
     #[test]
