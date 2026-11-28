@@ -19,7 +19,8 @@
 //! 3BD origin, BL, BL, 3 x 3BD range (min, centre, max), 3 x 3BD,
 //! BL, BL byte count + UTF-16 title, BL 0, 7 x BD, 6 x BL,
 //! 3BD origin, 4 x BD, BD vertical scale
-//! record: BL 0, BL, BD, BL, BD, BL index, BD, BD
+//! record: BD gap to the view (0 in most samples, where it reads like
+//!   `BL 0`), BL, BL, BL, BD, BL index, BD, BD
 //! ```
 //!
 //! A mass haul view (`AECC_MASS_HAUL_VIEW`) has the same layout, with
@@ -163,8 +164,10 @@ impl SectionViewFrame {
     }
 }
 
-// ponytail: the 5-bit runs, the band records' values and the fields
-// between the ranges and the vertical scale are read past by their sizes.
+// ponytail: the 5-bit runs and the fields between the ranges and the
+// vertical scale are read past by their sizes; the band's second word, its
+// `BD` and its two label offsets keep their values (257/449, 0, 10, 5) but
+// no reader consumes them yet.
 pub(super) fn view_frame(data: &[u8], start: usize, end: usize) -> Option<SectionViewFrame> {
     let mut bits = Bits::new(data, start, end);
     super::profile::graph_head(&mut bits)?;
@@ -185,12 +188,18 @@ pub(super) fn view_frame(data: &[u8], start: usize, end: usize) -> Option<Sectio
     }
     let items = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= 1000)?;
     bits.skip(5 * items)?;
+    // The band items, each opening with its gap to the view (a `BD`; 0 in
+    // most samples, where it reads like `BL 0`, and 1/48 in the
+    // application's views of Sections-Project-Objects.dwg), then two words
+    // (a band style id — 257 in the data band's views, 449 in the project
+    // objects'), a word, a `BD`, the band's set index (1), and the band's
+    // two label offsets (10 and 5). A non-finite `BD` is not this layout.
     for _ in 0..bits.bit_long()? {
-        (bits.bit_long()? == 0).then_some(())?;
-        bits.bit_long()?;
-        bits.bit_double()?;
-        bits.bit_long()?;
-        bits.bit_double()?;
+        bits.bit_double()?.is_finite().then_some(())?;
+        for _ in 0..3 {
+            bits.bit_long()?;
+        }
+        bits.bit_double()?.is_finite().then_some(())?;
         bits.bit_long()?;
         bits.bit_double()?;
         bits.bit_double()?;
